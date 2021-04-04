@@ -1,15 +1,2 @@
 G21HW1.java
  G21HW1
- G21HW1$1
- G21HW1$1AvgCount
- G21HW1$1FloatComparator
- G21HW1$2
- G21HW1$3
- G21HW1$4
- G21HW1$5
- G21HW1$6
- G21HW1$7
-FedericoHW1.java
- FedericoHW1
-StefanoHW1.java
- StefanoHW1

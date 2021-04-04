@@ -14,7 +14,7 @@ import java.util.*;
 import java.util.function.BiFunction;
 
 
-public class StefanoHW1 {
+public class G21HW1 {
     public static void main(String[] args) throws IOException {
 
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
