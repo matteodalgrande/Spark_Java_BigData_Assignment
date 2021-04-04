@@ -1,200 +1,118 @@
+import com.univocity.parsers.annotations.Convert;
 import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.*;
-import org.apache.spark.api.java.function.Function;
-import org.apache.spark.api.java.function.Function2;
-import org.apache.spark.api.java.function.PairFunction;
+import org.apache.spark.api.java.JavaPairRDD;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.storage.StorageLevel;
+import scala.Tuple2;
+import scala.tools.nsc.interactive.FreshRunReq;
 
-import scala.*;
-
-
-import java.lang.Float;
-import java.lang.Long;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.*;
+import java.util.function.BiFunction;
 
-public class G21HW1 {
-    public static void main(String[] args) {
+
+public class StefanoHW1 {
+    public static void main(String[] args) throws IOException {
 
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
         // CHECKING NUMBER OF CMD LINE PARAMETERS
         // Parameters are: num_partitions, <path_to_file>
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+        //System.setProperty("hadoop.home.dir", "C:\\Hadoop\\");
         if (args.length != 3) {
-            throw new IllegalArgumentException("USAGE: num_partitions file_path");
+            throw new IllegalArgumentException("USAGE: num_partitions num_products file_path");
         }
 
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
         // SPARK SETUP
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        SparkConf conf = new SparkConf(true).setAppName("WordCount");
+
+        SparkConf conf = new SparkConf(true).setAppName("HW1").setMaster("local");
         JavaSparkContext sc = new JavaSparkContext(conf);
         sc.setLogLevel("WARN");
 
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // 1 INPUT READING
+        // INPUT READING
         // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+
         // Read number of partitions
         int K = Integer.parseInt(args[0]);
+
+        // Read number of products to print
         int T = Integer.parseInt(args[1]);
+
         // Read input file and subdivide it into K random partitions
-        JavaRDD<String> RawData = sc.textFile(args[2]).repartition(K).cache();//partition and save in cache
-        System.out.println("num of chunks/partitions: " + RawData.getNumPartitions());//print number of chunks
+        // containing reviews (ProductID,UserID,Rating,Timestamp)
+        JavaRDD<String> RawData  = sc.textFile(args[2]).repartition(K).cache();
+        JavaPairRDD<String, Float> normalizedRatings;
+        JavaPairRDD<String, Float> maxNormRatings;
 
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // Assignment
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        //JavaPairRDD<String, Float> normalizedRatings;   // normalizedRatings --> for each string of RawData representing a review (ProductID,UserID,Rating,Timestamp),
-                                                        // NormalizedRatings contains the pair (ProductID,NormRating), where NormRating=Rating-AvgRating
-                                                        // and AvgRating is the average rating of all reviews by the user "UserID".
+        normalizedRatings = RawData
+                .mapToPair((review)->{ //MAP PHASE (R1)
+                    String[] tokens = review.split(",");
+                    String productID = tokens[0];
+                    String userID = tokens[1];
+                    Float rating = Float.parseFloat(tokens[2]);
+                    Tuple2<String, Float> value = new Tuple2<String,Float>(productID,rating);
+                    Tuple2<String, Tuple2> pair = new Tuple2<>(userID,value);
+                    return pair;
+                }).groupByKey() //REDUCE PHASE (R1)
+                .flatMapToPair((reviewByUSer) ->{ //MAP PHASE (R2)
+                    ArrayList<String> products = new ArrayList<>();
+                    ArrayList<Float>  ratings = new ArrayList<>();
+                    ArrayList<Tuple2<String,Float>> outputpairs = new ArrayList<>();
+                    // LOAD product and rating lists in such a way that product[i] has rating [i]
+                    for(Tuple2<String,Float> element : reviewByUSer._2())
+                    {
+                        products.add(element._1());
+                        ratings.add(element._2());
+                    }
+                    // COMPUTE average rating for user
+                    float sumratings = 0;
+                    float avgrating;
+                    for(float rating : ratings){
+                        sumratings += rating;
+                    }
+                    avgrating = sumratings/ratings.size();
+                    // NORMALIZE rating for each product rated by the user
+                    for (int i=0; i < products.size(); i++) {
+                        String product = products.get(i);
+                        Float normrating = ratings.get(i) - avgrating;
+                        Tuple2<String,Float> pair = new Tuple2<>(product,normrating);
+                        outputpairs.add(pair);
+                    }
+                    return outputpairs.iterator();
+                });//NO REDUCE PHASE (R2)
 
-
-
-
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // definition of function for create pairs like (key=UserID, value=(ProductID,Rating,Timestamp))
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        //  ProductID (string), UserID (string), Rating (integer in [1,5] represented as a real), Timestamp (integer)
-        //JavaPairRDD inputPairs = sc.parallelize(RawData);
-        PairFunction<String,Tuple2<String,String>, Tuple3<String,Float,Long>> keyDataFunction = new PairFunction<String, Tuple2<String,String>,Tuple3<String,Float,Long>>() {
-            @Override
-            public Tuple2<Tuple2<String,String>, Tuple3<String, Float, Long>> call(String s) throws Exception {
-                //setto il ProductID come key e il resto come valore eliminando pero' il productID tra i value
-                return new Tuple2<Tuple2<String,String>, Tuple3<String, Float, Long>> (new Tuple2<String,String>(s.split(",")[1], s.split(",")[0]), new Tuple3<String,Float,Long>(s.split(",")[0], Float.parseFloat(s.split(",")[2]), Long.parseLong(s.split(",")[3])));
-            }
-        };
-
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // definition of function for create pairs like (key= utente, value=(rating, ratings utente))
-        // ProductID (string), UserID (string), Rating (integer in [1,5] represented as a real), Timestamp (integer)
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        PairFunction<String, String, Tuple2<Float,String>> userAndRatingFunction = new PairFunction<String, String, Tuple2<Float,String>>() {
-            @Override
-            public Tuple2<String, Tuple2<Float,String>> call(String s) throws Exception {
-                //setto il UserID come key e rating like value
-                return new Tuple2<String, Tuple2<Float,String>>(s.split(",")[1], new Tuple2<Float,String>(Float.parseFloat(s.split(",")[2]), s.split(",")[0]));
-            }
-        };
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // CALCOLO L'oggetto per la media DI OGNI utente (key=userID, value=Object(averageValue))
-        // creo la classe, creo le tre funzioni per combineByKey(createCombiner(), mergeValue(), mergeCombiners())
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        class AvgCount implements Serializable {
-            public AvgCount(String s,Float total, Float num) { aL_.add(s); total_ = total; num_ = (Float) num; }
-            public Float total_;
-            public Float num_;
-            public ArrayList<String> aL_ = new ArrayList<String>();
-            public Float avg() { return (Float) total_ / (Float) num_; }
-        }
-        Function<Tuple2<Float,String>, AvgCount> createAcc =//String, Tuple2<Float,String>>
-                new Function<Tuple2<Float,String>, AvgCount>() {    //If it’s a new element, combineByKey() uses a function we provide, called createCombiner(),
-            @Override
-            public AvgCount call(Tuple2<Float,String> x) {  // to create the initial value for the accumulator on that key
-                return new AvgCount(x._2(), x._1(), 1f);
-            }
-        };
-        Function2<AvgCount, Tuple2<Float,String>, AvgCount> addAndCount = //If it is a value we have seen before while processing that partition, it will instead use
-            new Function2<AvgCount, Tuple2<Float,String>, AvgCount>() {//the provided function, mergeValue(), with the current value for the accumulator for that key and the new value.
-            @Override
-            public AvgCount call(AvgCount a, Tuple2<Float,String> x) {
-                a.aL_.add(x._2());
-                a.total_ += x._1();
-                a.num_ += 1;
-                return a;
-            }
-        };
-        Function2<AvgCount, AvgCount, AvgCount> combine =
-                new Function2<AvgCount, AvgCount, AvgCount>() {
-                    public AvgCount call(AvgCount a, AvgCount b) {
-                        Iterator<String> b_ = b.aL_.iterator();
-                        while(b_.hasNext()){
-                            a.aL_.add(b_.next());
+        maxNormRatings = normalizedRatings.
+                mapPartitionsToPair((normreview) -> {    // MAP PHASE (R1)
+                    HashMap<String, Float> reviewByProduct = new HashMap<>();
+                    while (normreview.hasNext()){
+                        Tuple2<String, Float> review = normreview.next();
+                        // UPDATE rating of product rating if it is higher than before
+                        if (review._2() > reviewByProduct.getOrDefault(review._1(), 0F) ){
+                            reviewByProduct.put(review._1(), review._2());
                         }
-                        a.total_ += b.total_;
-                        a.num_ += b.num_;
-                        return a;
                     }
-                };
-
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // 2
-        // CALCOLO NormalizedRatings = (ProductID,NormRating)
-        // NormalizedRatings contains the pair (ProductID,NormRating), where NormRating=Rating-AvgRating
-        // and AvgRating is the average rating of all reviews by the user "UserID".
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-
-        //normalizzo il valore
-        JavaPairRDD <String, Float> normalizedRatings = RawData.mapToPair(keyDataFunction).rightOuterJoin(RawData.mapToPair(userAndRatingFunction).combineByKey(createAcc, addAndCount, combine) //combineByKey(createCombiner(), mergeValue(), mergeCombiners())
-                .mapToPair( s -> {
-                    return new Tuple2<Tuple2<String,ArrayList<String>>,Float> (new Tuple2<String,ArrayList<String>>(s._1, s._2.aL_), s._2.avg());
-                }).flatMapToPair(s->{
-                    ArrayList<Tuple2<Tuple2<String,String>,Float>> a = new ArrayList<>();
-                    for(String st: s._1._2){
-                        a.add(new Tuple2<Tuple2<String,String>,Float>(new Tuple2<>(s._1._1(),st),s._2));
+                    ArrayList<Tuple2<String, Float>> pairs = new ArrayList<>();
+                    for (Map.Entry<String, Float> e : reviewByProduct.entrySet()) {
+                        pairs.add(new Tuple2<>(e.getKey(), e.getValue()));
                     }
-                    return a.iterator();
-                })).mapToPair(s ->{
-            return new Tuple2<String,Float>(s._2()._1.get()._1(), s._2._1.get()._2() - s._2._2() );//(ProductID,NormRating), where NormRating=Rating-AvgRating
+                    return pairs.iterator();
+                }).reduceByKey((x ,y) -> { // REDUCE PHASE (R1)
+            if(x > y){
+                return x;
+            }else {
+                return y;
+            }
         });
 
-        //normalizedRatings.collect().forEach(s-> System.out.println(s));
+        List<Tuple2<String,Float>> print =  maxNormRatings.mapToPair(x->x.swap()).sortByKey(false).mapToPair(x->x.swap()).take(T); // Swap pID(key) with MNR(value), apply sortByKey and swap again
+        for(int i=0;i<T;i++)
+            System.out.println("Product "+print.get(i)._1()+" maxNormRating  "+print.get(i)._2());
 
-
-
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // 3 - maxNormRatings
-        // Transform the RDD normalizedRatings into an RDD of pairs (String,Float) called
-        // maxNormRatings which, for each ProductID contains exactly one pair (ProductID, MNR)
-        // where MNR is the maximum normalized rating of product "ProductID".
-        // The maximum should be computed either using the reduceByKey method or
-        // the mapPartitionsToPair/mapPartitions method. (Hint: get inspiration from the WordCountExample program).
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        JavaPairRDD<String, Float> maxNormRatings =normalizedRatings.reduceByKey(
-            (v1, v2) -> Math.max(v1, v2)
-        );
-
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // 4
-        // Print the T products with largest maximum normalized rating, one product per line. (Hint: use a combination of sortByKey and take methods.)
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-
-       // invert key,value -> value,key
-        PairFunction<Tuple2<String, Float>, Float, String> swapFunction =
-            new PairFunction<Tuple2<String, Float>, Float, String>() {
-                @Override
-                public Tuple2<Float, String> call(Tuple2<String, Float> item) throws Exception {
-                    return item.swap();
-                }
-            };
-
-       //reorder from  In base float
-        class FloatComparator implements Comparator<Float>, Serializable{
-            @Override
-            public int compare(Float f1, Float f2){
-                return Float.valueOf(f1).compareTo(Float.valueOf(f2));//trasformo in stringa e uso il comparatore in stringa
-            }
-        }
-
-        //reinverto invert value,key -> key,value
-        PairFunction<Tuple2<Float, String>, String, Float> swapFunctionSecond =
-            new PairFunction<Tuple2<Float, String>, String, Float>() {
-                @Override
-                public Tuple2<String,Float> call(Tuple2<Float,String> item) throws Exception {
-                    return item.swap();
-                }
-            };
-
-
-        // T is the value in input
-        System.out.println();
-        System.out.println("Results:");
-        maxNormRatings.mapToPair(swapFunction).sortByKey(new FloatComparator(),false).mapToPair(swapFunctionSecond).take(T).forEach(s-> System.out.println(s));
-
-
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        // Useful to access the spark's web interface
-        // &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        //serve per guardare la dashboard di spark
-        Scanner myObj = new Scanner(System.in);  // Create a Scanner object
-        System.out.println("Vedi dashboard di spark at: http://192.168.1.13:4040/jobs/");
-        String input = myObj.nextLine();  // Read user input
     }
 }
