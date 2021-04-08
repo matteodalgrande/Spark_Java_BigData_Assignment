@@ -13,7 +13,12 @@ import java.io.IOException;
 import java.util.*;
 import java.util.function.BiFunction;
 
-
+//ROUND 1
+//1) MAP —>  con productID come chiave e calcolo il massimo relativo
+//2) REDUCE —> groupbyKey aggiungendo la chiave randomica
+//ROUND 2
+//1) MAP —>  con productID come chiave e calcolo il massimo relativo
+//2) REDUCE —> reducebykey calcolando il massimo assoluto
 public class G21HW1 {
     public static void main(String[] args) throws IOException {
 
@@ -49,6 +54,7 @@ public class G21HW1 {
         JavaRDD<String> RawData  = sc.textFile(args[2]).repartition(K).cache();
         JavaPairRDD<String, Float> normalizedRatings;
         JavaPairRDD<String, Float> maxNormRatings;
+        Random randomGenerator = new Random();
 
         normalizedRatings = RawData
                 .mapToPair((review)->{ //MAP PHASE (R1)
@@ -92,7 +98,7 @@ public class G21HW1 {
                     HashMap<String, Float> reviewByProduct = new HashMap<>();
                     while (normreview.hasNext()){
                         Tuple2<String, Float> review = normreview.next();
-                        // UPDATE rating of product rating if it is higher than before
+                        // UPDATE rating of product if it is higher than before
                         if (review._2() > reviewByProduct.getOrDefault(review._1(), 0F) ){
                             reviewByProduct.put(review._1(), review._2());
                         }
@@ -102,17 +108,53 @@ public class G21HW1 {
                         pairs.add(new Tuple2<>(e.getKey(), e.getValue()));
                     }
                     return pairs.iterator();
-                }).reduceByKey((x ,y) -> { // REDUCE PHASE (R1)
-            if(x > y){
-                return x;
-            }else {
-                return y;
-            }
-        });
+                }).groupBy((normreviewpair) -> randomGenerator.nextInt(K))
+                .flatMapToPair((element) -> {
+                    HashMap<String, Float> reviewByProduct = new HashMap<>();
+                    for (Tuple2<String, Float> c : element._2()) {
+                        // UPDATE rating of product if it is higher than before
+                        if (c._2() > reviewByProduct.getOrDefault(c._1(), 0F) ){
+                            reviewByProduct.put(c._1(), c._2());
+                        }
+                    }
+                    ArrayList<Tuple2<String, Float>> pairs = new ArrayList<>();
+                    for (Map.Entry<String, Float> e : reviewByProduct.entrySet()) {
+                        pairs.add(new Tuple2<>(e.getKey(), e.getValue()));
+                    }
+                    return pairs.iterator();
+                })
+                .reduceByKey((x ,y) -> { // REDUCE PHASE (R1)
+                    if(x > y){
+                        return x;
+                    }else {
+                        return y;
+                    }
+                });
+/*
+        maxNormRatings = normalizedRatings
+                .mapToPair((product) -> {  //MAP PHASE (R1)
+                    return new Tuple2<>(randomGenerator.nextInt(K),new Tuple2<String,Float>(product._1(),product._2())); // Assign a random integer [0,K] as key
+                }).groupByKey() //REDUCE PHASE (R1)
+                .flatMapToPair((element)->{ // MAP PHASE (R2)
+                    HashMap<String,Float> maximum = new HashMap<>();
+                    ArrayList<Tuple2<String,Float>> pairs = new ArrayList<>();
+                    for(Tuple2<String,Float> c : element._2())
+                        maximum.put(c._1(), Math.max(c._2(),maximum.getOrDefault(c._1(),  -6F))); // Found the MNR of Product "x" with key "y"
+                    for(Map.Entry<String,Float> e : maximum.entrySet())
+                        pairs.add(new Tuple2<>(e.getKey(),e.getValue()));
+                    return pairs.iterator();
+                }).reduceByKey((pID1 , pID2) -> // REDUCE PHASE (R2)
+                        Math.max(pID1,pID2)); // Calculate the MNR for product x
+
+*/
+
 
         List<Tuple2<String,Float>> print =  maxNormRatings.mapToPair(x->x.swap()).sortByKey(false).mapToPair(x->x.swap()).take(T); // Swap pID(key) with MNR(value), apply sortByKey and swap again
         for(int i=0;i<T;i++)
             System.out.println("Product "+print.get(i)._1()+" maxNormRating  "+print.get(i)._2());
 
+        Scanner myObj = new Scanner(System.in);  // Create a Scanner object
+        System.out.println("Vedi dashboard di spark at: http://192.168.1.13:4040/jobs/");
+        String input = myObj.nextLine();  // Read user input
     }
 }
