@@ -1,17 +1,11 @@
-import com.univocity.parsers.annotations.Convert;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.storage.StorageLevel;
 import scala.Tuple2;
-import scala.tools.nsc.interactive.FreshRunReq;
 
-import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.*;
-import java.util.function.BiFunction;
 
 //ROUND 1
 //1) MAP —>  con productID come chiave e calcolo il massimo relativo
